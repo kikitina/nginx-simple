@@ -1,0 +1,9 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: simple-nginx
+    restart: unless-stopped
+    ports:
+      - "8888:80"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
