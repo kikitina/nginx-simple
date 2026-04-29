@@ -317,32 +317,39 @@ main() {
     log "Re-run with --force to regenerate secrets (invalidates clients)."
     # shellcheck disable=SC1090
     . "${PROXY_ENV_FILE}"
-    local needs_rerender=0
     # Migration: older installs lack HY2_OBFS_PASS.
     if [[ -z "${HY2_OBFS_PASS:-}" ]]; then
       log "Migrating: adding hysteria2 salamander obfs (generating HY2_OBFS_PASS)."
       HY2_OBFS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
       printf 'HY2_OBFS_PASS=%s\n' "${HY2_OBFS_PASS}" >>"${PROXY_ENV_FILE}"
-      needs_rerender=1
     fi
-    # Honor edits to .env: if REALITY_DEST changed, re-render xray config and restart.
+    # Honor edits to .env: if REALITY_DEST changed, mirror back to .proxy.env.
     if [[ -f "${COMPOSE_ENV_FILE}" ]]; then
       local env_dest
       env_dest="$(grep -E '^REALITY_DEST=' "${COMPOSE_ENV_FILE}" | tail -n1 | cut -d= -f2-)"
       if [[ -n "${env_dest}" && "${env_dest}" != "${REALITY_DEST}" ]]; then
-        log "REALITY_DEST in .env (${env_dest}) differs from .proxy.env (${REALITY_DEST}); re-rendering xray config."
+        log "REALITY_DEST in .env (${env_dest}) differs from .proxy.env (${REALITY_DEST}); will re-render."
         REALITY_DEST="${env_dest}"
         REALITY_SNI="${REALITY_DEST%%:*}"
         sed -i "s|^REALITY_DEST=.*|REALITY_DEST=${REALITY_DEST}|; s|^REALITY_SNI=.*|REALITY_SNI=${REALITY_SNI}|" "${PROXY_ENV_FILE}"
-        needs_rerender=1
       fi
     fi
-    # Always re-render to pick up template changes (e.g. tightened shortIds, obfs).
+    # Snapshot rendered configs before re-rendering so we know which
+    # containers actually need a restart (compose up -d won't reload
+    # bind-mounted file changes on its own).
+    local sb_old xr_old sb_new xr_new
+    sb_old="$(sha256sum "${SINGBOX_CONFIG}" 2>/dev/null | awk '{print $1}')"
+    xr_old="$(sha256sum "${XRAY_CONFIG}"    2>/dev/null | awk '{print $1}')"
     render_configs
     start_services
-    if [[ "${needs_rerender}" -eq 1 ]]; then
-      log "Restarting sing-box and xray to apply config changes."
-      dc restart sing-box xray
+    sb_new="$(sha256sum "${SINGBOX_CONFIG}" | awk '{print $1}')"
+    xr_new="$(sha256sum "${XRAY_CONFIG}"    | awk '{print $1}')"
+    local restart=()
+    [[ "${sb_old}" != "${sb_new}" ]] && restart+=("sing-box")
+    [[ "${xr_old}" != "${xr_new}" ]] && restart+=("xray")
+    if [[ ${#restart[@]} -gt 0 ]]; then
+      log "Config changed for: ${restart[*]} — restarting."
+      dc restart "${restart[@]}"
     fi
     print_share_links
     exit 0
