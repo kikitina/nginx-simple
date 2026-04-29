@@ -110,8 +110,7 @@ prompt_inputs() {
   log "NOTE: cert will be issued ONLY for ${DOMAIN} (no apex, no wildcard)."
 
   while :; do
-    read -rs -p "Cloudflare API Token (Zone:Read + DNS:Edit on the zone): " CF_TOKEN
-    echo
+    read -r -p "Cloudflare API Token (Zone:Read + DNS:Edit on the zone): " CF_TOKEN
     [[ -n "${CF_TOKEN}" ]] && break
     echo "  Token cannot be empty." >&2
   done
@@ -163,9 +162,10 @@ generate_secrets() {
 
   local x25519_out
   x25519_out="$(d run --rm "${XRAY_IMAGE}" xray x25519)"
-  REALITY_PRIV="$(echo "${x25519_out}" | awk -F': *' '/Private key/ {print $2; exit}' | tr -d '\r')"
-  REALITY_PUB="$(echo "${x25519_out}"  | awk -F': *' '/Public key/  {print $2; exit}' | tr -d '\r')"
-  [[ -n "${REALITY_PRIV}" && -n "${REALITY_PUB}" ]] || fail "Failed to parse x25519 keypair."
+  # Newer xray prints: "PrivateKey: <key>" and "Password (PublicKey): <key>"
+  REALITY_PRIV="$(echo "${x25519_out}" | awk '/^PrivateKey:/ {print $2; exit}' | tr -d '\r')"
+  REALITY_PUB="$(echo "${x25519_out}"  | awk '/^Password/    {print $NF; exit}' | tr -d '\r')"
+  [[ -n "${REALITY_PRIV}" && -n "${REALITY_PUB}" ]] || fail "Failed to parse x25519 keypair. Raw output: ${x25519_out}"
 
   SHORT_ID="$(openssl rand -hex 8)"
   HY2_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
