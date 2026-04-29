@@ -7,3 +7,38 @@ services:
       - "8888:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+
+  sing-box:
+    image: ghcr.io/sagernet/sing-box:latest
+    container_name: simple-sing-box
+    restart: unless-stopped
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+    profiles: ["proxy"]
+    ports:
+      - "${HY2_PORT:-443}:${HY2_PORT:-443}/udp"
+    volumes:
+      - ./sing-box/config.json:/etc/sing-box/config.json:ro
+      - ./certs:/certs:ro
+
+  xray:
+    image: teddysun/xray:latest
+    container_name: simple-xray
+    restart: unless-stopped
+    profiles: ["proxy"]
+    ports:
+      - "${REALITY_PORT:-443}:${REALITY_PORT:-443}/tcp"
+    volumes:
+      - ./xray/config.json:/etc/xray/config.json:ro
+
+  acme:
+    image: neilpang/acme.sh:latest
+    container_name: simple-acme
+    restart: unless-stopped
+    command: ["daemon"]
+    profiles: ["proxy"]
+    environment:
+      - CF_Token=${CF_TOKEN:-}
+    volumes:
+      - ./acme:/acme.sh
+      - ./certs:/certs
+      - /var/run/docker.sock:/var/run/docker.sock:ro

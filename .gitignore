@@ -1,0 +1,6 @@
+certs/
+acme/
+.proxy.env
+.env
+sing-box/config.json
+xray/config.json
