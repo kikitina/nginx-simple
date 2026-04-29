@@ -80,7 +80,7 @@ print_share_links() {
 Share links (import into NekoBox / v2rayN / Hiddify):
 
 Hysteria2:
-  hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&alpn=h3#hy2-${DOMAIN}
+  hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&alpn=h3&obfs=salamander&obfs-password=${HY2_OBFS_PASS}#hy2-${DOMAIN}
 
 VLESS + Reality + Vision:
   vless://${UUID}@${DOMAIN}:${REALITY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUB}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#reality-${DOMAIN}
@@ -169,6 +169,7 @@ generate_secrets() {
 
   SHORT_ID="$(openssl rand -hex 8)"
   HY2_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
+  HY2_OBFS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
 }
 
 write_env_files() {
@@ -195,6 +196,7 @@ REALITY_PRIV=${REALITY_PRIV}
 REALITY_PUB=${REALITY_PUB}
 SHORT_ID=${SHORT_ID}
 HY2_PASS=${HY2_PASS}
+HY2_OBFS_PASS=${HY2_OBFS_PASS}
 ENV
   chmod 600 "${COMPOSE_ENV_FILE}" "${PROXY_ENV_FILE}"
 }
@@ -215,6 +217,10 @@ render_configs() {
       "users": [{"name": "u1", "password": "${HY2_PASS}"}],
       "up_mbps": 100,
       "down_mbps": 500,
+      "obfs": {
+        "type": "salamander",
+        "password": "${HY2_OBFS_PASS}"
+      },
       "tls": {
         "enabled": true,
         "server_name": "${DOMAIN}",
@@ -249,7 +255,7 @@ JSON
           "xver": 0,
           "serverNames": ["${REALITY_SNI}"],
           "privateKey": "${REALITY_PRIV}",
-          "shortIds": ["", "${SHORT_ID}"]
+          "shortIds": ["${SHORT_ID}"]
         }
       }
     }
@@ -311,6 +317,14 @@ main() {
     log "Re-run with --force to regenerate secrets (invalidates clients)."
     # shellcheck disable=SC1090
     . "${PROXY_ENV_FILE}"
+    local needs_rerender=0
+    # Migration: older installs lack HY2_OBFS_PASS.
+    if [[ -z "${HY2_OBFS_PASS:-}" ]]; then
+      log "Migrating: adding hysteria2 salamander obfs (generating HY2_OBFS_PASS)."
+      HY2_OBFS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
+      printf 'HY2_OBFS_PASS=%s\n' "${HY2_OBFS_PASS}" >>"${PROXY_ENV_FILE}"
+      needs_rerender=1
+    fi
     # Honor edits to .env: if REALITY_DEST changed, re-render xray config and restart.
     if [[ -f "${COMPOSE_ENV_FILE}" ]]; then
       local env_dest
@@ -320,11 +334,16 @@ main() {
         REALITY_DEST="${env_dest}"
         REALITY_SNI="${REALITY_DEST%%:*}"
         sed -i "s|^REALITY_DEST=.*|REALITY_DEST=${REALITY_DEST}|; s|^REALITY_SNI=.*|REALITY_SNI=${REALITY_SNI}|" "${PROXY_ENV_FILE}"
-        render_configs
-        dc restart xray || true
+        needs_rerender=1
       fi
     fi
+    # Always re-render to pick up template changes (e.g. tightened shortIds, obfs).
+    render_configs
     start_services
+    if [[ "${needs_rerender}" -eq 1 ]]; then
+      log "Restarting sing-box and xray to apply config changes."
+      dc restart sing-box xray
+    fi
     print_share_links
     exit 0
   fi
