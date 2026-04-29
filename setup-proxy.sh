@@ -289,7 +289,7 @@ issue_cert() {
     --fullchainpath "/certs/${DOMAIN}.crt" \
     --keypath       "/certs/${DOMAIN}.key" \
     --ecc \
-    --reloadcmd "docker restart simple-sing-box"
+    --reloadcmd "docker restart simple-sing-box 2>/dev/null || true"
 
   ${SUDO} chmod 644 "${SCRIPT_DIR}/certs/${DOMAIN}.crt"
   ${SUDO} chmod 640 "${SCRIPT_DIR}/certs/${DOMAIN}.key"
@@ -324,6 +324,7 @@ main() {
         dc restart xray || true
       fi
     fi
+    start_services
     print_share_links
     exit 0
   fi
