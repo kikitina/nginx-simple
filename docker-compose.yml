@@ -42,3 +42,11 @@ services:
       - ./acme:/acme.sh
       - ./certs:/certs
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+networks:
+  default:
+    name: nginx-simple-net
+    ipam:
+      config:
+        - subnet: 10.88.0.0/24
+          gateway: 10.88.0.1
