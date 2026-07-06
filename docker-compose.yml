@@ -22,7 +22,7 @@ services:
       - ./certs:/certs:ro
 
   xray:
-    image: teddysun/xray:latest
+    image: teddysun/xray:26.5.9
     container_name: simple-xray
     restart: unless-stopped
     profiles: ["proxy"]
