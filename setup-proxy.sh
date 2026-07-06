@@ -90,6 +90,9 @@ Hysteria2:
 VLESS + Reality + Vision:
   vless://${UUID}@${DOMAIN}:${REALITY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUB}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#reality-${DOMAIN}
 
+AnyTLS URI:
+  anytls://${ANYTLS_PASS}@${DOMAIN}:${ANYTLS_PORT}/?sni=${DOMAIN}#anytls-${DOMAIN}
+
 AnyTLS (sing-box outbound):
   {
     "type": "anytls",

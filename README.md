@@ -58,13 +58,13 @@ AnyTLS uses the issued cert. Reality does not use a cert — it borrows the TLS 
 
 ### After setup
 
-The script prints Hysteria2 and Reality share links plus an AnyTLS sing-box outbound snippet. Re-running `bash setup-proxy.sh` is a no-op that reprints the links/config. To regenerate all secrets (and invalidate existing clients):
+The script prints Hysteria2 and Reality share links, an AnyTLS URI, and an AnyTLS sing-box outbound snippet. Re-running `bash setup-proxy.sh` is a no-op that reprints the links/config. To regenerate all secrets (and invalidate existing clients):
 
 ```bash
 bash setup-proxy.sh --force
 ```
 
-AnyTLS client import support varies by app. sing-box documents AnyTLS as JSON outbound config, so the script prints a ready-to-copy outbound object rather than an `anytls://` link.
+AnyTLS client import support varies by app. The generic AnyTLS URI covers the basic password, host, port, and SNI fields; sing-box documents AnyTLS as JSON outbound config, so the script also prints a ready-to-copy outbound object.
 
 ### Env files
 
