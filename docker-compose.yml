@@ -16,6 +16,7 @@ services:
     profiles: ["proxy"]
     ports:
       - "${HY2_PORT:-443}:${HY2_PORT:-443}/udp"
+      - "${ANYTLS_PORT:-8443}:${ANYTLS_PORT:-8443}/tcp"
     volumes:
       - ./sing-box/config.json:/etc/sing-box/config.json:ro
       - ./certs:/certs:ro

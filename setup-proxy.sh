@@ -22,8 +22,8 @@ for arg in "$@"; do
       cat <<USAGE
 Usage: $0 [--force]
 
-Bootstraps sing-box (hysteria2) and xray (VLESS+Reality+Vision) on top of the
-existing nginx Docker Compose stack. On first run, prompts for domain and
+Bootstraps sing-box (hysteria2 + AnyTLS) and xray (VLESS+Reality+Vision) on top
+of the existing nginx Docker Compose stack. On first run, prompts for domain and
 Cloudflare API token, generates secrets, issues a TLS cert via acme.sh+DNS-01,
 and brings up the proxy services.
 
@@ -73,17 +73,38 @@ require_openssl() {
   command -v openssl >/dev/null 2>&1 || fail "openssl is required (apt-get install openssl)."
 }
 
+read_env_value() {
+  local key="$1" file="$2"
+  grep -E "^${key}=" "${file}" 2>/dev/null | tail -n1 | cut -d= -f2- || true
+}
+
 print_share_links() {
   cat <<LINKS
 
 ================================================================
-Share links (import into NekoBox / v2rayN / Hiddify):
+Share/client configs (import or copy into supported clients):
 
 Hysteria2:
   hysteria2://${HY2_PASS}@${DOMAIN}:${HY2_PORT}/?sni=${DOMAIN}&alpn=h3&obfs=salamander&obfs-password=${HY2_OBFS_PASS}#hy2-${DOMAIN}
 
 VLESS + Reality + Vision:
   vless://${UUID}@${DOMAIN}:${REALITY_PORT}?encryption=none&security=reality&sni=${REALITY_SNI}&fp=chrome&pbk=${REALITY_PUB}&sid=${SHORT_ID}&type=tcp&flow=xtls-rprx-vision#reality-${DOMAIN}
+
+AnyTLS (sing-box outbound):
+  {
+    "type": "anytls",
+    "tag": "anytls-${DOMAIN}",
+    "server": "${DOMAIN}",
+    "server_port": ${ANYTLS_PORT},
+    "password": "${ANYTLS_PASS}",
+    "idle_session_check_interval": "30s",
+    "idle_session_timeout": "30s",
+    "min_idle_session": 5,
+    "tls": {
+      "enabled": true,
+      "server_name": "${DOMAIN}"
+    }
+  }
 
 Secrets are persisted in ${PROXY_ENV_FILE} (mode 600).
 ================================================================
@@ -118,6 +139,9 @@ prompt_inputs() {
   read -r -p "Hysteria2 UDP port [443]: " HY2_PORT
   HY2_PORT="${HY2_PORT:-443}"
 
+  read -r -p "AnyTLS TCP port [8443]: " ANYTLS_PORT
+  ANYTLS_PORT="${ANYTLS_PORT:-8443}"
+
   read -r -p "Reality TCP port [443]: " REALITY_PORT
   REALITY_PORT="${REALITY_PORT:-443}"
 
@@ -130,9 +154,16 @@ prompt_inputs() {
 preflight() {
   log "Pre-flight checks."
 
+  if [[ "${ANYTLS_PORT}" == "${REALITY_PORT}" ]]; then
+    fail "AnyTLS TCP port ${ANYTLS_PORT} conflicts with Reality TCP port ${REALITY_PORT}. Pick a different AnyTLS port."
+  fi
+
   if command -v ss >/dev/null 2>&1; then
     if ${SUDO} ss -lntu "( sport = :${HY2_PORT} )" 2>/dev/null | tail -n +2 | grep -qE 'udp.*:'"${HY2_PORT}"'\b'; then
       fail "UDP port ${HY2_PORT} is already in use."
+    fi
+    if ${SUDO} ss -lntu "( sport = :${ANYTLS_PORT} )" 2>/dev/null | tail -n +2 | grep -qE 'tcp.*:'"${ANYTLS_PORT}"'\b'; then
+      fail "TCP port ${ANYTLS_PORT} is already in use."
     fi
     if ${SUDO} ss -lntu "( sport = :${REALITY_PORT} )" 2>/dev/null | tail -n +2 | grep -qE 'tcp.*:'"${REALITY_PORT}"'\b'; then
       fail "TCP port ${REALITY_PORT} is already in use."
@@ -154,7 +185,7 @@ preflight() {
 }
 
 generate_secrets() {
-  log "Generating secrets (UUID, Reality keypair, short ID, hy2 password)."
+  log "Generating secrets (UUID, Reality keypair, short ID, hy2 password, AnyTLS password)."
   d pull "${XRAY_IMAGE}" >/dev/null
 
   UUID="$(d run --rm "${XRAY_IMAGE}" xray uuid | tr -d '\r\n')"
@@ -170,6 +201,7 @@ generate_secrets() {
   SHORT_ID="$(openssl rand -hex 8)"
   HY2_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
   HY2_OBFS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
+  ANYTLS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
 }
 
 write_env_files() {
@@ -178,6 +210,7 @@ write_env_files() {
   umask 077
   cat >"${COMPOSE_ENV_FILE}" <<ENV
 HY2_PORT=${HY2_PORT}
+ANYTLS_PORT=${ANYTLS_PORT}
 REALITY_PORT=${REALITY_PORT}
 DOMAIN=${DOMAIN}
 CF_TOKEN=${CF_TOKEN}
@@ -188,6 +221,7 @@ ENV
 DOMAIN=${DOMAIN}
 CF_TOKEN=${CF_TOKEN}
 HY2_PORT=${HY2_PORT}
+ANYTLS_PORT=${ANYTLS_PORT}
 REALITY_PORT=${REALITY_PORT}
 REALITY_DEST=${REALITY_DEST}
 REALITY_SNI=${REALITY_SNI}
@@ -197,6 +231,7 @@ REALITY_PUB=${REALITY_PUB}
 SHORT_ID=${SHORT_ID}
 HY2_PASS=${HY2_PASS}
 HY2_OBFS_PASS=${HY2_OBFS_PASS}
+ANYTLS_PASS=${ANYTLS_PASS}
 ENV
   chmod 600 "${COMPOSE_ENV_FILE}" "${PROXY_ENV_FILE}"
 }
@@ -225,6 +260,20 @@ render_configs() {
         "enabled": true,
         "server_name": "${DOMAIN}",
         "alpn": ["h3"],
+        "certificate_path": "/certs/${DOMAIN}.crt",
+        "key_path": "/certs/${DOMAIN}.key"
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "anytls-in",
+      "listen": "::",
+      "listen_port": ${ANYTLS_PORT},
+      "users": [{"name": "u1", "password": "${ANYTLS_PASS}"}],
+      "padding_scheme": [],
+      "tls": {
+        "enabled": true,
+        "server_name": "${DOMAIN}",
         "certificate_path": "/certs/${DOMAIN}.crt",
         "key_path": "/certs/${DOMAIN}.key"
       }
@@ -323,17 +372,60 @@ main() {
       HY2_OBFS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
       printf 'HY2_OBFS_PASS=%s\n' "${HY2_OBFS_PASS}" >>"${PROXY_ENV_FILE}"
     fi
-    # Honor edits to .env: if REALITY_DEST changed, mirror back to .proxy.env.
+    if [[ -z "${ANYTLS_PORT:-}" ]]; then
+      log "Migrating: adding AnyTLS TCP port (ANYTLS_PORT=8443)."
+      ANYTLS_PORT=8443
+      printf 'ANYTLS_PORT=%s\n' "${ANYTLS_PORT}" >>"${PROXY_ENV_FILE}"
+    fi
+    if [[ -z "${ANYTLS_PASS:-}" ]]; then
+      log "Migrating: adding AnyTLS password (generating ANYTLS_PASS)."
+      ANYTLS_PASS="$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)"
+      printf 'ANYTLS_PASS=%s\n' "${ANYTLS_PASS}" >>"${PROXY_ENV_FILE}"
+    fi
+    # Honor edits to .env: mirror ports and REALITY_DEST back to .proxy.env.
     if [[ -f "${COMPOSE_ENV_FILE}" ]]; then
-      local env_dest
-      env_dest="$(grep -E '^REALITY_DEST=' "${COMPOSE_ENV_FILE}" | tail -n1 | cut -d= -f2-)"
+      local env_hy2_port env_anytls_port env_reality_port env_dest
+      env_hy2_port="$(read_env_value HY2_PORT "${COMPOSE_ENV_FILE}")"
+      env_anytls_port="$(read_env_value ANYTLS_PORT "${COMPOSE_ENV_FILE}")"
+      env_reality_port="$(read_env_value REALITY_PORT "${COMPOSE_ENV_FILE}")"
+      env_dest="$(read_env_value REALITY_DEST "${COMPOSE_ENV_FILE}")"
+      if [[ -n "${env_hy2_port}" && "${env_hy2_port}" != "${HY2_PORT}" ]]; then
+        log "HY2_PORT in .env (${env_hy2_port}) differs from .proxy.env (${HY2_PORT}); will re-render."
+        HY2_PORT="${env_hy2_port}"
+        sed -i "s|^HY2_PORT=.*|HY2_PORT=${HY2_PORT}|" "${PROXY_ENV_FILE}"
+      fi
+      if [[ -n "${env_anytls_port}" && "${env_anytls_port}" != "${ANYTLS_PORT}" ]]; then
+        log "ANYTLS_PORT in .env (${env_anytls_port}) differs from .proxy.env (${ANYTLS_PORT}); will re-render."
+        ANYTLS_PORT="${env_anytls_port}"
+        sed -i "s|^ANYTLS_PORT=.*|ANYTLS_PORT=${ANYTLS_PORT}|" "${PROXY_ENV_FILE}"
+      fi
+      if [[ -n "${env_reality_port}" && "${env_reality_port}" != "${REALITY_PORT}" ]]; then
+        log "REALITY_PORT in .env (${env_reality_port}) differs from .proxy.env (${REALITY_PORT}); will re-render."
+        REALITY_PORT="${env_reality_port}"
+        sed -i "s|^REALITY_PORT=.*|REALITY_PORT=${REALITY_PORT}|" "${PROXY_ENV_FILE}"
+      fi
       if [[ -n "${env_dest}" && "${env_dest}" != "${REALITY_DEST}" ]]; then
         log "REALITY_DEST in .env (${env_dest}) differs from .proxy.env (${REALITY_DEST}); will re-render."
         REALITY_DEST="${env_dest}"
         REALITY_SNI="${REALITY_DEST%%:*}"
         sed -i "s|^REALITY_DEST=.*|REALITY_DEST=${REALITY_DEST}|; s|^REALITY_SNI=.*|REALITY_SNI=${REALITY_SNI}|" "${PROXY_ENV_FILE}"
       fi
+    else
+      umask 077
+      cat >"${COMPOSE_ENV_FILE}" <<ENV
+HY2_PORT=${HY2_PORT}
+ANYTLS_PORT=${ANYTLS_PORT}
+REALITY_PORT=${REALITY_PORT}
+DOMAIN=${DOMAIN}
+CF_TOKEN=${CF_TOKEN}
+REALITY_DEST=${REALITY_DEST}
+ENV
+      chmod 600 "${COMPOSE_ENV_FILE}"
     fi
+    if ! grep -qE '^ANYTLS_PORT=' "${COMPOSE_ENV_FILE}"; then
+      printf 'ANYTLS_PORT=%s\n' "${ANYTLS_PORT}" >>"${COMPOSE_ENV_FILE}"
+    fi
+    preflight
     # Snapshot rendered configs before re-rendering so we know which
     # containers actually need a restart (compose up -d won't reload
     # bind-mounted file changes on its own).

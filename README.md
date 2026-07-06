@@ -3,7 +3,7 @@
 A minimal Docker Compose stack:
 
 - **nginx** on port `8888` with a `204` response on `/generate_204` (always on).
-- Optional **proxy services**: sing-box (hysteria2) + xray (VLESS+Reality+Vision), gated behind a Compose `proxy` profile.
+- Optional **proxy services**: sing-box (hysteria2 + AnyTLS) + xray (VLESS+Reality+Vision), gated behind a Compose `proxy` profile.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ Verify:
 curl -i http://localhost:8888/generate_204
 ```
 
-## Add proxy services (sing-box hysteria2 + xray VLESS+Reality+Vision)
+## Add proxy services (sing-box hysteria2 + AnyTLS + xray VLESS+Reality+Vision)
 
 ```bash
 bash setup-proxy.sh
@@ -38,30 +38,33 @@ The script will prompt for:
 - **Subdomain FQDN** (e.g., `proxy.example.com`) — must be a subdomain, not the apex (`example.com`).
 - **Cloudflare API token** — scoped to `Zone:Read` + `DNS:Edit` on the relevant zone.
 - **Hysteria2 UDP port** (default 443).
+- **AnyTLS TCP port** (default 8443) — must differ from the Reality TCP port.
 - **Reality TCP port** (default 443).
 - **Reality target** (default `www.microsoft.com:443`) — pick from <https://www.v2ray-agent.com/archives/1680104902581>. Must support TLS 1.3 + X25519 + h2.
 
-Everything else (UUID, Reality x25519 keypair, short ID, hysteria2 password) is auto-generated. Configs are written to `sing-box/config.json` and `xray/config.json` and bind-mounted into the containers, so they persist across restarts.
+Everything else (UUID, Reality x25519 keypair, short ID, hysteria2 password, AnyTLS password) is auto-generated. Configs are written to `sing-box/config.json` and `xray/config.json` and bind-mounted into the containers, so they persist across restarts. AnyTLS requires sing-box `1.12.0` or newer; the Compose stack uses `ghcr.io/sagernet/sing-box:latest`.
 
 ### Prerequisites
 
 - A DNS A (and optionally AAAA) record for the subdomain pointing at this VPS.
-- UDP/443 (or your chosen `HY2_PORT`) and TCP/443 (or your chosen `REALITY_PORT`) open in the firewall.
+- UDP/443 (or your chosen `HY2_PORT`), TCP/8443 (or your chosen `ANYTLS_PORT`), and TCP/443 (or your chosen `REALITY_PORT`) open in the firewall.
 - A Cloudflare API token with `Zone:Read` + `DNS:Edit` permissions on the zone.
 
 ### TLS cert
 
 The cert is issued via [acme.sh](https://github.com/acmesh-official/acme.sh) running inside a `simple-acme` container, using Cloudflare DNS-01 — only for the subdomain you provided (no apex, no wildcard). Renewal is handled by the same container in daemon mode (no host cron). On a successful renewal, sing-box is restarted automatically via the mounted Docker socket.
 
-Reality does not use a cert — it borrows the TLS handshake from the chosen target SNI.
+AnyTLS uses the issued cert. Reality does not use a cert — it borrows the TLS handshake from the chosen target SNI.
 
 ### After setup
 
-The script prints two share links you can import into NekoBox / v2rayN / Hiddify. Re-running `bash setup-proxy.sh` is a no-op that reprints the links. To regenerate all secrets (and invalidate existing clients):
+The script prints Hysteria2 and Reality share links plus an AnyTLS sing-box outbound snippet. Re-running `bash setup-proxy.sh` is a no-op that reprints the links/config. To regenerate all secrets (and invalidate existing clients):
 
 ```bash
 bash setup-proxy.sh --force
 ```
+
+AnyTLS client import support varies by app. sing-box documents AnyTLS as JSON outbound config, so the script prints a ready-to-copy outbound object rather than an `anytls://` link.
 
 ### Env files
 
@@ -73,7 +76,7 @@ The bootstrap writes two env files in the repo root (both `chmod 600`, gitignore
 You usually do not need to edit these by hand — re-run `setup-proxy.sh --force` to regenerate. Two exceptions where editing `.env` and re-running `bash setup-proxy.sh` (no `--force`) is enough:
 
 - **`REALITY_DEST`** — change to a different SNI from <https://www.v2ray-agent.com/archives/1680104902581>; the script detects the diff, re-renders `xray/config.json`, and restarts xray. Existing client share links remain valid (only the impersonated SNI changes; clients also need to be updated to the new SNI).
-- **`HY2_PORT` / `REALITY_PORT` / `CF_TOKEN`** — re-apply with `docker compose --profile proxy up -d`.
+- **`HY2_PORT` / `ANYTLS_PORT` / `REALITY_PORT` / `CF_TOKEN`** — re-apply with `docker compose --profile proxy up -d`.
 
 ### Operating
 
