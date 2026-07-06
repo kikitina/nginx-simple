@@ -40,7 +40,7 @@ The script will prompt for:
 - **Hysteria2 UDP port** (default 443).
 - **AnyTLS TCP port** (default 8443) — must differ from the Reality TCP port.
 - **Reality TCP port** (default 443).
-- **Reality target** (default `www.microsoft.com:443`) — pick from <https://www.v2ray-agent.com/archives/1680104902581>. Must support TLS 1.3 + X25519 + h2.
+- **Reality target** (default `www.microsoft.com:443`) — must support TLS 1.3 + X25519 + h2. The default is a convenience value, not a long-term recommendation; for better Reality camouflage, scan/select a less-common target near the VPS instead of blindly using popular examples.
 
 Everything else (UUID, Reality x25519 keypair, short ID, hysteria2 password, AnyTLS password) is auto-generated. Configs are written to `sing-box/config.json` and `xray/config.json` and bind-mounted into the containers, so they persist across restarts. AnyTLS requires sing-box `1.12.0` or newer; the Compose stack uses `ghcr.io/sagernet/sing-box:latest`.
 
@@ -55,6 +55,8 @@ Everything else (UUID, Reality x25519 keypair, short ID, hysteria2 password, Any
 The cert is issued via [acme.sh](https://github.com/acmesh-official/acme.sh) running inside a `simple-acme` container, using Cloudflare DNS-01 — only for the subdomain you provided (no apex, no wildcard). Renewal is handled by the same container in daemon mode (no host cron). On a successful renewal, sing-box is restarted automatically via the mounted Docker socket.
 
 AnyTLS uses the issued cert. Reality does not use a cert — it borrows the TLS handshake from the chosen target SNI.
+
+This stack uses certificate-based AnyTLS on its own TCP port plus a separate xray Reality service. Some guides run AnyTLS directly inside sing-box Reality on `443/tcp` to avoid a domain/cert and put the whole TCP proxy behind Reality. That is a different topology: it would replace or move the existing xray Reality service because both need the same TCP port.
 
 ### After setup
 
@@ -75,7 +77,7 @@ The bootstrap writes two env files in the repo root (both `chmod 600`, gitignore
 
 You usually do not need to edit these by hand — re-run `setup-proxy.sh --force` to regenerate. Two exceptions where editing `.env` and re-running `bash setup-proxy.sh` (no `--force`) is enough:
 
-- **`REALITY_DEST`** — change to a different SNI from <https://www.v2ray-agent.com/archives/1680104902581>; the script detects the diff, re-renders `xray/config.json`, and restarts xray. Existing client share links remain valid (only the impersonated SNI changes; clients also need to be updated to the new SNI).
+- **`REALITY_DEST`** — change to a different SNI target; the script detects the diff, re-renders `xray/config.json`, and restarts xray. Existing client share links remain valid (only the impersonated SNI changes; clients also need to be updated to the new SNI).
 - **`HY2_PORT` / `ANYTLS_PORT` / `REALITY_PORT` / `CF_TOKEN`** — re-apply with `docker compose --profile proxy up -d`.
 
 ### Operating

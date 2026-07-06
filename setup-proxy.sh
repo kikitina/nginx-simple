@@ -149,7 +149,7 @@ prompt_inputs() {
   REALITY_PORT="${REALITY_PORT:-443}"
 
   read -r -p "Reality target host:port [www.microsoft.com:443]
-  (pick one from https://www.v2ray-agent.com/archives/1680104902581 — must support TLS 1.3 + X25519 + h2): " REALITY_DEST
+  (must support TLS 1.3 + X25519 + h2; for long-term use, scan/select a less-common nearby target): " REALITY_DEST
   REALITY_DEST="${REALITY_DEST:-www.microsoft.com:443}"
   REALITY_SNI="${REALITY_DEST%%:*}"
 }
